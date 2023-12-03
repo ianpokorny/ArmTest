@@ -1,0 +1,405 @@
+#include "daisy_seed.h"
+#include "daisysp.h"
+#include "dev/oled_ssd130x.h"
+
+using namespace daisy;
+using namespace daisysp;
+
+/* OLED PINS */
+#define CS_PIN          D7  // pin 8
+#define SCLK_PIN        D8  // pin 9
+#define MISO_PIN        D9  // pin 10
+#define MOSI_PIN        D10 // pin 11
+#define RST_PIN         D11 // pin 12
+#define DC_PIN          D12 // pin 13
+/* DIGITAL INPUT PINS */
+#define BUTTON_1_PIN    D25 // pin 32
+#define BUTTON_2_PIN    D26 // pin 33
+#define ENC_A_PIN       D27 // pin 34
+#define ENC_B_PIN       D28 // pin 35
+#define ENC_BUTTON_PIN  D29 // pin 36
+/* ANALOG INPUT PINS */
+#define JOY_X_PIN       A0
+#define JOY_Y_PIN       A1
+
+#define BUTTON_UPDATE_RATE  100.0f
+#define ENCODER_UPDATE_RATE 1000.0f       // in 
+#define POT_UPDATE_RATE     0.0005f     // in seconds
+#define SAMPLE_RATE         48000.0f    // in Hz
+
+
+bool    right = 0, 
+        left = 0, 
+        up = 0, 
+        down = 0;
+
+int     joyReadX = 0, //change these to float, and ADC read will be in float
+        joyReadY = 0;
+
+int     encoderVal = 0;
+
+DaisySeed       hw;
+MidiUartHandler	midi;
+Encoder         encoder;
+Switch          button1,
+                button2;
+Parameter       xPos, 
+                yPos;
+AnalogControl   pot1, 
+                pot2;
+
+
+
+/****** Below only needed for Serial Terminal Monitoring ****************/
+/** FIFO to hold messages as we're ready to print them */
+FIFO<MidiEvent, 128> event_log;
+/** Fills string with string representation of MidiEvent::Type
+ *  str needs to be at least 16 bytes long to store the data
+ * TODO: Move this into MIDI lib or something 
+*/
+void GetMidiTypeAsString(MidiEvent& msg, char* str)
+{
+    switch(msg.type)
+    {
+        case NoteOff: strcpy(str, "NoteOff"); break;
+        case NoteOn: strcpy(str, "NoteOn"); break;
+        case PolyphonicKeyPressure: strcpy(str, "PolyKeyPres."); break;
+        case ControlChange: strcpy(str, "CC"); break;
+        case ProgramChange: strcpy(str, "Prog. Change"); break;
+        case ChannelPressure: strcpy(str, "Chn. Pressure"); break;
+        case PitchBend: strcpy(str, "PitchBend"); break;
+        case SystemCommon: strcpy(str, "Sys. Common"); break;
+        case SystemRealTime: strcpy(str, "Sys. Realtime"); break;
+        case ChannelMode: strcpy(str, "Chn. Mode"); break;
+        default: strcpy(str, "Unknown"); break;
+    }
+}
+/************************************************************************/
+
+
+void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, size_t size)
+{
+	for (size_t i = 0; i < size; i++)
+	{
+		out[0][i] = in[0][i];
+		out[1][i] = in[1][i];
+	}
+}
+
+int main(void)
+{
+
+    OledDisplay<SSD130xI2c128x64Driver>  display;
+OledDisplay<SSD130xI2c128x64Driver>::Config display_cfg;
+
+        display_cfg.driver_config.transport_config.i2c_address               = 0x3C;
+    display_cfg.driver_config.transport_config.i2c_config.periph         = I2CHandle::Config::Peripheral::I2C_1;
+    display_cfg.driver_config.transport_config.i2c_config.speed          = I2CHandle::Config::Speed::I2C_100KHZ;
+    display_cfg.driver_config.transport_config.i2c_config.mode           = I2CHandle::Config::Mode::I2C_MASTER;
+    display_cfg.driver_config.transport_config.i2c_config.pin_config.scl = {DSY_GPIOB, 8};    display_cfg.driver_config.transport_config.i2c_config.pin_config.sda = {DSY_GPIOB, 9};
+    /** OLED_Init_BEGIN **/
+    display.Init(display_cfg);
+    display.Fill(false);
+    display.Update();
+    /** OLED Init_END **/
+    hw.Configure();
+	hw.Init();
+
+	hw.SetAudioBlockSize(4); // number of samples handled per callback
+	hw.SetAudioSampleRate(SaiHandle::Config::SampleRate::SAI_48KHZ);
+	hw.StartAudio(AudioCallback);
+
+    /** OLED Config_BEGIN **/
+	//OledDisplay<SSD130x4WireSpi128x64Driver>         display;
+   // OledDisplay<SSD130x4WireSpi128x64Driver>::Config display_cfg;
+    /** OLED Config_END **/
+
+	/** SPI Config_BEGIN **/
+   // display_cfg.driver_config.transport_config.spi_config.periph = SpiHandle::Config::Peripheral::SPI_1;
+    //display_cfg.driver_config.transport_config.spi_config.baud_prescaler = SpiHandle::Config::BaudPrescaler::PS_8;
+    //display_cfg.driver_config.transport_config.spi_config.pin_config.nss = seed::CS_PIN;   
+    //display_cfg.driver_config.transport_config.spi_config.pin_config.sclk = seed::SCLK_PIN;   
+    //display_cfg.driver_config.transport_config.spi_config.pin_config.miso = seed::MISO_PIN;   
+    //display_cfg.driver_config.transport_config.spi_config.pin_config.mosi = seed::MOSI_PIN;
+    //display_cfg.driver_config.transport_config.pin_config.reset = seed::RST_PIN;
+    //display_cfg.driver_config.transport_config.pin_config.dc = seed::DC_PIN;
+    /** SPI Config_END **/
+
+
+// dans i2c
+
+
+    
+    /** DIGTAL I/O Init_BEGIN **/
+    button1.Init(seed::BUTTON_1_PIN, BUTTON_UPDATE_RATE, daisy::Switch::TYPE_MOMENTARY, daisy::Switch::POLARITY_INVERTED, daisy::Switch::PULL_UP);
+    //button1.Init(hw.GetPin(25), 500);
+     // button2.Init(hw.GetPin(26), 500);
+
+   
+   button2.Init(seed::BUTTON_2_PIN, BUTTON_UPDATE_RATE, daisy::Switch::TYPE_MOMENTARY, daisy::Switch::POLARITY_INVERTED, daisy::Switch::PULL_UP);
+        button1.Debounce();
+        button2.Debounce();
+    encoder.Init(seed::ENC_A_PIN, seed::ENC_B_PIN, seed::ENC_BUTTON_PIN, ENCODER_UPDATE_RATE);
+    /** DIGITAL I/O Init_END **/
+
+    /** ANALOG I/O Init_BEGIN **/
+    AdcChannelConfig adcConfig [2];
+    adcConfig[0].InitSingle(seed::JOY_X_PIN);
+    adcConfig[1].InitSingle(seed::JOY_Y_PIN);
+    hw.adc.Init(adcConfig, 2);
+    hw.adc.Start();
+    pot1.Init(hw.adc.GetPtr(0), SAMPLE_RATE, false, false, POT_UPDATE_RATE);
+    pot2.Init(hw.adc.GetPtr(1), SAMPLE_RATE, false, false, POT_UPDATE_RATE);
+    xPos.Init(pot1, 0, 128, Parameter::LINEAR);
+    yPos.Init(pot2, 0, 64, Parameter::LINEAR);
+    /** ANALOG I/O Init_END **/
+
+	/** MIDI UART Init_BEGIN **/
+	//MidiUartHandler::Config midiConfig;
+	//midi.Init(midiConfig);
+	//midi.StartReceive();
+	/** MIDI UART Init_END **/
+
+	hw.StartLog(false); //start Serial Comm
+
+	//uint32_t now      = System::GetNow();
+   // uint32_t log_time = System::GetNow();
+
+	while(1)
+	{
+		midi.Listen();
+
+		while(midi.HasEvents())
+		{
+			MidiEvent msg = midi.PopEvent();
+			MTCQuarterFrameEvent midiClock = msg.AsMTCQuarterFrame();
+			
+			if (msg.srt_type == TimingClock)
+			{
+				//hw.PrintLine("%d", msg.data[0]);
+
+				//hw.PrintLine("%d", msg.data[1]);
+
+				
+				// hw.Print("PPQN = ");
+				// hw.PrintLine("%d", midiClock.value);
+				// hw.Print("MSG TYPE = ");
+				// hw.PrintLine("%d", midiClock.message_type);
+				// if (midiClock.value == 0)
+				// {
+				// 	hw.SetLed(1);
+				// }
+				// else
+				// {
+				// 	hw.SetLed(0);
+				// }
+			}
+
+			if (msg.srt_type == Start)
+			{
+				hw.PrintLine("/// START ///");
+			}
+			
+			if (msg.srt_type == Stop)
+			{
+				hw.PrintLine("*** STOP ***");
+			}
+		}
+
+		/** START OF MIDI SERIAL MONITOR **************************************************************/
+		// now = System::GetNow();
+		// /** Loop through any MIDI Events */
+        // while(midi.HasEvents())
+        // {
+        //     MidiEvent msg = midi.PopEvent();
+
+        //     switch(msg.type)
+        //     {
+        //         case NoteOn:
+        //             // Do something on Note On events
+        //             {
+        //                 uint8_t bytes[3] = {0x90, 0x00, 0x00};
+        //                 bytes[1] = msg.data[0];
+        //                 bytes[2] = msg.data[1];
+        //                 midi.SendMessage(bytes, 3);
+        //             }
+        //             break;
+        //         default: break;
+        //     }
+
+        //     /** Regardless of message, let's add the message data to our queue to output */
+        //     event_log.PushBack(msg);
+        // }
+
+        // /** Now separately, every 5ms we'll print the top message in our queue if there is one */
+        // if(now - log_time > 5)
+        // {
+        //     log_time = now;
+        //     if(!event_log.IsEmpty())
+        //     {
+        //         auto msg = event_log.PopFront();
+        //         char outstr[128];
+        //         char type_str[16];
+        //         GetMidiTypeAsString(msg, type_str);
+        //         sprintf(outstr,
+        //                 "time:\t%ld\ttype: %s\tChannel:  %d\tData MSB: "
+        //                 "%d\tData LSB: %d\n",
+        //                 now,
+        //                 type_str,
+        //                 msg.channel,
+        //                 msg.data[0],
+        //                 msg.data[1]);
+        //         hw.PrintLine(outstr);
+        //     }
+        // }
+		/** END OF MIDI SERIAL MONITOR *******************************************************/
+
+
+		encoder.Debounce();
+
+		int increment = encoder.Increment();
+
+		if(increment > 0)
+        {
+            encoderVal += 1;
+        }
+        else if(increment < 0)
+        {
+            encoderVal -= 1;
+        }
+
+        if(encoder.RisingEdge())
+        {
+            encoderVal = 0;
+        }
+
+        if(button1.RisingEdge())
+        {
+           //hw.PrintLine("%d", button1.Pressed());
+           hw.PrintLine("/// BUTTON 1 RSISING EDGE///");
+        }
+
+
+
+        if(button1.FallingEdge())
+        {
+           //hw.PrintLine("%d", button1.Pressed());
+           hw.PrintLine("/// BUTTON 1 falling EDGE///");
+        }
+
+
+        
+
+  if(button1.Pressed())
+        {
+           //hw.PrintLine("%d", button1.Pressed());
+           hw.PrintLine("/// BUTTON 1 PRESSED///");
+        }
+        if(button2.RisingEdge())
+        {
+  hw.PrintLine("/// BUTTON 2///");
+        }
+
+        /** This method generates a range of 0.0 to 1.0 **/
+        //joyReadX = hw.adc.GetFloat(0);
+        //joyReadY = hw.adc.GetFloat(1);
+        /***********************************/
+
+        /** This method generates a range based on param.Init() values **/
+        joyReadX = xPos.Process();
+        joyReadY = yPos.Process();
+        /***********************************/
+
+        /* JOYSTICK DIRECTIONAL - WORK IN PROGRESS */
+        if (joyReadX < 64)
+        {
+            //LEFT
+            left = 1;
+              hw.PrintLine("/// POT X =64 or lkess");
+        }
+        else
+        {
+            left = 0;
+              hw.PrintLine("/// POT X =65 or more  ");
+        }
+
+        if (joyReadX > 64)
+        {
+            //RIGHT
+            right = 1;
+        }
+        else
+        {
+            right = 0;
+        }
+
+        if (joyReadY < 32)
+        {
+            //UP
+            up = 1;
+        }
+        else
+        {
+            up = 0;
+        }
+
+        if (joyReadY > 32)
+        {
+            //DOWN
+            down = 1;
+        }
+        else
+        {
+            down = 0;
+        }
+        /**********************************************************/
+
+        /** Clear the display */
+        display.Fill(false);
+        /** Set the cursor away from the edge of the screen */
+        display.SetCursor(4, 8);
+        /** Write the following, starting at the cursor */
+        display.WriteString("Encoder = ", Font_6x8, true);
+        /** Update the cursor to the next space below the string */
+        display.SetCursor(64, 8);
+        /** Create a string representation of the value*/
+        FixedCapStr<16> str("");
+        str.AppendInt(encoderVal);
+        /** Write the value to the display */
+        display.WriteString(str, Font_6x8, true);
+
+        FixedCapStr<16> strX("");
+        display.SetCursor(4, 52);
+        display.WriteString("X = ", Font_6x8, true);
+        display.SetCursor(30, 52);
+        strX.AppendFloat(joyReadX);
+        display.WriteString(strX, Font_6x8, true);
+
+        FixedCapStr<16> strY("");
+        display.SetCursor(68, 52);
+        display.WriteString("Y = ", Font_6x8, true);
+        display.SetCursor(94, 52);
+        strY.AppendFloat(joyReadY);
+        display.WriteString(strY, Font_6x8, true);
+
+        /* draw button indicator outlines */
+        display.DrawRect(112, 30, 126, 44, true, false);  
+        display.DrawRect(96, 30, 110, 44, true, false);
+
+        /* draw button indicators */
+        display.DrawRect(114, 32, 124, 42, button1.Pressed(), true);
+        display.DrawRect(98, 32, 108, 42, button2.Pressed(), true);
+
+        /* draw joystick indicators */
+        display.DrawCircle(joyReadX, joyReadY, 4, true);
+        display.DrawRect(joyReadX - 2, joyReadY - 2 , joyReadX + 2, joyReadY + 2, true, true);
+
+        display.DrawRect(2, 32, 10, 40, true, left);
+        display.DrawRect(12, 22, 20, 30, true, up);
+        display.DrawRect(22, 32, 30, 40, true, right);
+        display.DrawRect(12, 42, 20, 50, true, down);
+
+        /** Push the updated screen contents to the hardware */
+        display.Update();
+	}
+}
