@@ -91,7 +91,7 @@ int scorePlayer1 = 0;
 int scorePlayer2 = 0;
 
 int ballX = 128/2;      
-int ballY = 32/2;
+int ballY = 64/2;
 int ballSpeedX = 4;
 int ballSpeedY = 2;
 
@@ -442,7 +442,7 @@ fillRectangle(63, 22, 1, 5, 1);
 
 void collisionControl() {
   //bounce from top and bottom
-  if (ballY >= 32 - 2 || ballY <= 0) {
+  if (ballY >= 64 - 2 || ballY <= 0) {
     ballSpeedY *= -1;
   } 
 
